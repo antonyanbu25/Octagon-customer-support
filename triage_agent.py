@@ -12,10 +12,13 @@ from reply_drafter import draft_reply
 from escalation_gate import decide
 
 
-def handle_ticket(ticket):
+def handle_ticket(ticket, plan_lookup=None):
     """Full triage for one ticket. Returns everything needed to act + to log."""
     # 1. classify + route + extract signals
-    classification = classify_ticket(ticket)
+    if plan_lookup is not None:
+        classification = classify_ticket(ticket, plan_lookup=plan_lookup)
+    else:
+        classification = classify_ticket(ticket)
 
     # 2. only draft a reply on the technical path (commercial -> human)
     draft = None

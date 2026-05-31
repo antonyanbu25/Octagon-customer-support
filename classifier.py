@@ -83,9 +83,9 @@ def route(plan_class, intent):
     return team, GROUP_IDS[team], False
 
 
-def classify_ticket(ticket):
+def classify_ticket(ticket, plan_lookup=lookup_plan):
     """Full classification for one ticket. Returns a result dict."""
-    plan_name, plan_class = lookup_plan(ticket["requester_email"])
+    plan_name, plan_class = plan_lookup(ticket["requester_email"])
     signals = classify_intent(ticket)
     intent = signals["intent"]
 
