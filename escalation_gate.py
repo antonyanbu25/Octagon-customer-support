@@ -23,7 +23,7 @@ The four+1 escalation conditions:
 """
 
 
-def decide(classification, draft=None):
+def decide(classification, draft=None, qa_result=None):
     """Decide whether to auto-send or escalate. Returns a decision dict.
 
     decision:
@@ -54,6 +54,11 @@ def decide(classification, draft=None):
     # human team (Sales / Customer Success) to handle the relationship.
     if classification.get("intent") == "commercial":
         reasons.append("commercial_needs_human")
+
+    # QA check (optional second opinion): if an independent LLM-as-judge scored
+    # the drafted reply and it FAILED, don't auto-send -> hand to a human.
+    if qa_result is not None and not qa_result.get("passed", True):
+        reasons.append("qa_failed")
 
     # --- the decision ---
     if reasons:
