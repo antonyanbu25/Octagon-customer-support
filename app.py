@@ -18,7 +18,11 @@ DEPLOY (Streamlit Community Cloud):
 import streamlit as st
 from triage_agent import handle_ticket
 from sample_data import SAMPLE_TICKETS, CONTACTS
-
+from kb_index import build_index, retrieve
+try:
+    retrieve("test", n_results=1)   # probe: does the index exist?
+except Exception:
+    build_index()                    # empty/missing -> build it now
 st.set_page_config(page_title="Octagon Triage Agent", page_icon="🎯", layout="centered")
 
 st.title("🎯 Octagon — Support Triage Agent")
