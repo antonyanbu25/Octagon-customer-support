@@ -1,111 +1,131 @@
-# Support Triage Agent — OCTAGON
+# Octagon — Support Triage Agent
 
-**Objective:** Set up a customer support process for "OCTAGON", a fictitious SaaS
-organisation, using the latest AI concepts.
+An agentic AI system that triages customer-support tickets: it classifies the ticket, routes it to the right team, retrieves a grounded answer from a knowledge base, drafts a reply, and decides whether to **auto-send or escalate to a human**.
 
-**Concepts used:** RAG · Human in the loop · Guardrails · MCP tool usage ·
-Intent-based classification · Integration with Freshdesk
+It is built around one governing principle:
 
-OCTAGON runs support across four teams, split two ways — by **who the customer is**
-(trial or paid) and by **what they need** (commercial or technical). Doing that
-triage by hand is slow and inconsistent, and it's the first thing to break at volume.
-This agent does the triage automatically and only pulls in a human when judgement or
-a financial commitment is actually at stake. The agent is the reasoning core: it
-decides which tools to call and whether a human is needed, ticket by ticket — no
-brittle keyword rules to maintain.
+> **When uncertain, escalate rather than auto-send.** A wrong automated reply to a customer is far costlier than an unnecessary handoff to a human.
+
+**[▶ Try the live demo](https://octagon-customer-support-sfx3g8u3frxwlcxu5cy4tp.streamlit.app)** — paste a ticket and watch the agent work. (Free-tier app; first load may take ~30s to wake.)
 
 ---
 
-## Workflow
+## Why this exists
 
-- Ticket arrives (Freshdesk webhook).
-- Look up the contact's plan from the Freshdesk contact/company record → trial or paid.
-- Reason about intent → commercial or technical.
-- Map plan × intent to the right ticket type + group, and update the Freshdesk ticket.
-- Branch on intent:
-  - **Commercial** (Sales / Customer Success): route and assign only — no auto-reply. A human picks it up. Stop.
-  - **Technical** (Customer Support / Technical Consulting): retrieve from the KB (RAG) and draft a grounded reply.
-- Run the drafted reply through the escalation gate (below). If any condition is true, add a private note and leave it for a human.
-- If no escalation condition is met, send the reply.
+Most "AI for customer support" demos happily auto-answer everything. Real support doesn't work that way — the hard part isn't generating a reply, it's knowing *when not to*. This project encodes that judgment: a pipeline that is deliberately biased toward escalation, measured end-to-end, and built so the model never sends an answer it can't ground.
 
-Governing principle: **when uncertain, escalate rather than auto-send.**
+---
 
-### Routing model
+## How it works
 
-Routing is a 2×2 of plan against intent, with Engineering as a downstream queue.
+The agent runs a fixed pipeline. Each step is plain Python my code controls (not model-orchestrated), which keeps the flow predictable, evaluable, and safe.
 
-| | Trial plan | Paid plan (Growth / Pro / Enterprise) |
+```
+Ticket
+  │
+  ▼
+Classify  ──►  plan (trial/paid), intent (technical/commercial),
+  │            churn risk, is-bug, confidence
+  ▼
+Route     ──►  2×2 routing to the right team
+  │
+  ├─ commercial ───────────────►  escalate to a human team (no auto-reply)
+  │
+  ▼ technical
+Retrieve  ──►  semantic search over the KB (RAG)
+  │
+  ▼
+Draft     ──►  grounded reply (refuses if KB doesn't cover the question)
+  │
+  ▼
+QA review ──►  independent LLM-as-judge scores the reply (optional layer)
+  │
+  ▼
+Decide    ──►  AUTO-SEND  or  ESCALATE (+ reasons)
+```
+
+### Routing (2×2)
+| | Trial | Paid |
 |---|---|---|
-| **Commercial** — pricing, offers, demos, trial extension, renewals, business reviews | Sales | Customer Success |
-| **Technical** — configuration, workflow automation, integrations, app not working, bugs | Technical Consulting | Customer Support |
+| **Commercial** | Sales | Customer Success |
+| **Technical** | Technical Consulting | Customer Support |
 
-**Engineering** isn't a triage destination — it receives bugs handed up from Customer
-Support or Technical Consulting when a code fix is needed.
+If the plan can't be found, the ticket defaults to Sales and is flagged `plan_miss` (a reason to escalate).
 
----
-
-## Integration: Freshdesk
-
-Reads and actions on the ticket go through the Freshdesk MCP server —
-`fetchTicket` and `fetchContact`/`fetchCompany` to read, `updateTicket` to set the
-type and route to a group, `createTicketNote` for the human handoff, and
-`replyTicket` on the clean send path.
-
-## RAG
-
-A small set of KB articles is converted into a vector database, enabling the LLM to
-search and fetch the right information when responding to customer queries. This is a
-retrieval layer built *alongside* the MCP — Freshdesk's solution-article tools fetch
-by folder or ID, not by free-text query, so semantic search is handled here.
-
-## Human in the loop
-
-The agent checks all four conditions before sending. Any one of them stops the
-auto-reply and hands the ticket to a human via a private note.
-
-- **Churn / cancellation risk** — the customer threatens to cancel or downgrade, asks about leaving, names a competitor, or is strongly dissatisfied.
-- **Ungrounded reply** — the draft can't be supported by a retrieved KB article.
-- **Low confidence / ambiguity** — the agent is unsure, or the request is unclear.
-- **Bug report** — additionally assigned to the Engineering group.
-
-A false negative on churn (a cancellation signal that slips through to an auto-reply)
-is far costlier than a false positive, so the gate is deliberately biased toward
-escalating when unsure.
+### Escalation triggers
+The agent escalates instead of auto-sending if **any** of these fire: churn risk, the ticket is a bug, low confidence, plan lookup missed, the reply couldn't be grounded, the ticket is commercial, or the QA layer failed the reply. The gate collects *all* reasons, not just the first — so the handoff note explains exactly why.
 
 ---
 
-## What's built now
+## What makes it more than a wrapper
 
-The **classifier** — the front half of the workflow — is implemented and testable
-locally without a Freshdesk connection.
+**Two independent measurement layers.** The system is graded two different ways:
+- An **eval harness** that scores *decisions* (route/escalate) against a labeled set.
+- An **LLM-as-judge QA agent** that scores *reply quality* (groundedness, relevance, tone, safety), requiring **every** dimension to pass — so one bad dimension (e.g. an ungrounded claim) fails the reply even if the tone is perfect.
 
-| File | Role |
-|---|---|
-| `classifier.py` | Plan lookup → intent classification (Claude API) → routing. Entry point: `classify_ticket()`. |
-| `config.py` | Plan tiers, the 2×2 routing matrix, Freshdesk group-ID placeholders. |
-| `sample_data.py` | Mock plan lookup + 10 sample tickets covering every matrix cell and each edge case. |
-| `test_classifier.py` | Runs all 10 tickets and prints a results table. |
+In the demo, the same ticket that auto-sends with QA off gets **escalated with QA on** when the judge catches that the reply invented steps not in the knowledge base. The drafter's own grounding check missed it; the independent judge caught it. That second layer is the point.
 
-The classifier already extracts `churn_risk`, `is_bug`, and `confidence` in the same
-call that determines intent — so the escalation gate gets those signals without a
-second model call.
+**Grounded replies, not confident hallucinations.** The reply drafter uses two-layer grounding: a retrieval-distance threshold, plus a prompt that returns `INSUFFICIENT_CONTEXT` if the KB doesn't actually cover the question. If it can't ground an answer, it escalates rather than guess.
 
-### Run it
+**Injectable plan lookup.** The same classifier runs against mock data in tests/evals and a live help desk in production, by injecting the plan-lookup function — so tests stay fast and offline while production uses real data.
+
+**Direct API by design, not MCP.** The agent calls the help-desk REST API directly rather than using MCP. This is deliberate: a fixed, safety-biased pipeline should have its flow owned by code (so the escalation gate always runs and the system stays deterministic and testable). MCP suits open-ended, model-orchestrated copilots — a different problem.
+
+---
+
+## Evaluation
+
+The eval harness scores two layers across **16 labeled cases** covering the full 2×2, bugs, explicit and soft churn, churn false-positive guards, low-confidence/ambiguous tickets, multi-topic tickets, and plan-miss cases:
+
+- **Classification** — each of the 7 classifier fields (plan, intent, team, churn risk, is-bug, plan-miss, confidence).
+- **End-to-end escalation** — did the agent make the right auto-send vs escalate call, for the right reasons?
+- **Churn confusion matrix** — TP/FP/FN/TN on the highest-stakes signal.
+
+```
+python eval_harness.py
+```
+
+> Note on the numbers: a high score on a self-authored eval set means the system is internally consistent, not that it's bulletproof. The next step is hardening the eval with adversarial and out-of-distribution cases — which is exactly how I'd treat it in production.
+
+---
+
+## Stack
+
+- **Claude API** (`claude-sonnet-4-6`) — classification, reply drafting, QA judging
+- **ChromaDB** — local semantic KB index (RAG)
+- **Streamlit** — the live demo app
+- **Freshdesk REST API** — live help-desk integration (ticket fetch, routing, private notes; runs in dry-run by default)
+
+---
+
+## Run it locally
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env        # add your ANTHROPIC_API_KEY
-python test_classifier.py
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+
+python eval_harness.py        # run the evals
+streamlit run app.py          # launch the demo
 ```
+
+The demo runs entirely on sample data — no live help desk needed.
 
 ---
 
-## Roadmap
+## Repo map
 
-- [x] **Classifier** — plan lookup, intent classification, team routing
-- [ ] **Freshdesk integration** — read tickets and write type/group via the Freshdesk MCP
-- [ ] **RAG** — index OCTAGON's KB articles into a vector store and retrieve top matches per ticket
-- [ ] **Reply drafting** — draft technical replies grounded in retrieved KB context
-- [ ] **Escalation gate** — wire the four conditions to `createTicketNote` + the Engineering handoff
-- [ ] **Send path** — `replyTicket` on the clean, no-escalation path
-- [ ] **Guardrails** — plan-miss fallback, loop prevention (ignore the agent's own updates), and an eval set over the sample tickets
+| File | What it does |
+|---|---|
+| `classifier.py` | One Claude call → intent, churn, is-bug, confidence (+ injectable plan lookup) |
+| `kb_index.py` | ChromaDB semantic index + `retrieve()` |
+| `reply_drafter.py` | Retrieve → two-layer grounded reply (or `INSUFFICIENT_CONTEXT`) |
+| `escalation_gate.py` | Collects all escalation triggers → auto-send / escalate decision |
+| `qa_agent.py` | LLM-as-judge scoring reply quality on 4 dimensions |
+| `triage_agent.py` | Orchestrator: runs the full pipeline for one ticket |
+| `eval_set.py` / `eval_harness.py` | Labeled cases + two-layer scoring |
+| `freshdesk_client.py` / `run_on_freshdesk.py` | Live help-desk integration (dry-run by default) |
+| `app.py` | Streamlit demo |
+
+---
+
+*Built as a hands-on exploration of agentic AI for customer experience — tool use, RAG, evaluation, and human-in-the-loop escalation.*
