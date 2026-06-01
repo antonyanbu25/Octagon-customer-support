@@ -15,7 +15,8 @@ USAGE:
     pip install chromadb
     python kb_index.py        # builds the index + runs a quick smoke test
 """
-
+import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import chromadb
 from kb_articles import KB_ARTICLES
 
