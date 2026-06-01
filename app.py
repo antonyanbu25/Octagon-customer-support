@@ -1,8 +1,8 @@
 """
 Streamlit demo for the Octagon Support Triage Agent.
 
-A clickable demo: paste a ticket (or pick a sample), watch the agent classify,
-retrieve, draft a grounded reply, and decide whether to auto-send or escalate.
+A clickable demo: pick a sample ticket (or write one), watch the agent classify,
+retrieve a grounded answer, and decide whether to auto-send or escalate.
 Runs on MOCK data (sample contacts) — safe, no real customer data, no live
 Freshdesk needed.
 
@@ -18,20 +18,20 @@ DEPLOY (Streamlit Community Cloud):
 import streamlit as st
 from triage_agent import handle_ticket
 from sample_data import SAMPLE_TICKETS, CONTACTS
-from kb_index import retrieve, build_index
+from kb_index import build_index
+
 st.set_page_config(page_title="Octagon Triage Agent", page_icon="🎯", layout="centered")
 
-# Build the KB index on first run if it doesn't exist yet (e.g. fresh deploy).
-# Cached so it only runs once per app session, not on every interaction.
+# Ensure the KB index is populated. On a fresh deploy the index is empty, so
+# retrieval would return nothing and reply drafting would fail. build_index()
+# uses upsert(), so calling it is safe and idempotent (no duplicates).
+# @st.cache_resource runs this ONCE per app session, not on every interaction.
 @st.cache_resource
 def _ensure_index():
-    try:
-        retrieve("connectivity probe", n_results=1)
-    except Exception:
-        build_index()
+    build_index()
     return True
 
-_ensure_index()                # empty/missing -> build it now
+_ensure_index()
 
 st.title("🎯 Octagon — Support Triage Agent")
 st.caption(
