@@ -1,6 +1,6 @@
-anthropic
+anthropic==0.104.0
 python-dotenv
 chromadb
 requests
 streamlit
-protobuf>=3.20,<4
+protobuf>=3.20,<4 
