@@ -18,12 +18,20 @@ DEPLOY (Streamlit Community Cloud):
 import streamlit as st
 from triage_agent import handle_ticket
 from sample_data import SAMPLE_TICKETS, CONTACTS
-from kb_index import build_index, retrieve
-try:
-    retrieve("test", n_results=1)   # probe: does the index exist?
-except Exception:
-    build_index()                    # empty/missing -> build it now
+from kb_index import retrieve, build_index
 st.set_page_config(page_title="Octagon Triage Agent", page_icon="🎯", layout="centered")
+
+# Build the KB index on first run if it doesn't exist yet (e.g. fresh deploy).
+# Cached so it only runs once per app session, not on every interaction.
+@st.cache_resource
+def _ensure_index():
+    try:
+        retrieve("connectivity probe", n_results=1)
+    except Exception:
+        build_index()
+    return True
+
+_ensure_index()                # empty/missing -> build it now
 
 st.title("🎯 Octagon — Support Triage Agent")
 st.caption(
